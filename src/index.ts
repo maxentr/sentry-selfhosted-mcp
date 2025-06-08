@@ -117,63 +117,104 @@ class SelfHostedSentryServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
-          name: 'get_sentry_issue',
-          description: 'Retrieve details for a specific Sentry issue by ID or URL.',
-          inputSchema: { type: 'object', properties: { issue_id_or_url: { type: 'string', description: 'Sentry issue ID or full issue URL.' } }, required: ['issue_id_or_url'] },
-        },
-        {
-            name: 'list_sentry_projects',
-            description: 'List all projects within the configured Sentry organization.',
-            inputSchema: { type: 'object', properties: {}, required: [] }, // No input args needed
-        },
-        {
-            name: 'list_sentry_issues',
-            description: 'List issues for a specific project, optionally filtering by query or status.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    project_slug: { type: 'string', description: 'The slug of the project (e.g., "my-web-app").' },
-                    query: { type: 'string', description: 'Optional Sentry search query (e.g., "is:unresolved environment:production").' },
-                    status: { type: 'string', enum: ['resolved', 'unresolved', 'ignored'], description: 'Optional issue status filter.' },
-                },
-                required: ['project_slug'],
+          name: "get_sentry_issue",
+          description:
+            "Retrieve details for a specific Sentry issue by ID or URL, including the stacktrace from the latest event.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              issue_id_or_url: {
+                type: "string",
+                description:
+                  "Sentry issue ID or full issue URL. Issue ID is a number e.g: 123456",
+              },
             },
+            required: ["issue_id_or_url"],
+          },
         },
         {
-            name: 'get_sentry_event_details',
-            description: 'Retrieve details for a specific event ID within a project.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    project_slug: { type: 'string', description: 'The slug of the project.' },
-                    event_id: { type: 'string', description: 'The ID of the event.' },
-                },
-                required: ['project_slug', 'event_id'],
-            },
+          name: "list_sentry_projects",
+          description:
+            "List all projects within the configured Sentry organization.",
+          inputSchema: { type: "object", properties: {}, required: [] }, // No input args needed
         },
         {
-            name: 'update_sentry_issue_status',
-            description: 'Update the status of a Sentry issue.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    issue_id: { type: 'string', description: 'The ID of the issue to update.' },
-                    status: { type: 'string', enum: ['resolved', 'ignored', 'unresolved'], description: 'The new status for the issue.' },
-                },
-                required: ['issue_id', 'status'],
+          name: "list_sentry_issues",
+          description:
+            "List issues for a specific project, optionally filtering by query or status.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              project_slug: {
+                type: "string",
+                description: 'The slug of the project (e.g., "my-web-app").',
+              },
+              query: {
+                type: "string",
+                description:
+                  'Optional Sentry search query (e.g., "is:unresolved environment:production").',
+              },
+              status: {
+                type: "string",
+                enum: ["resolved", "unresolved", "ignored"],
+                description: "Optional issue status filter.",
+              },
             },
+            required: ["project_slug"],
+          },
         },
         {
-            name: 'create_sentry_issue_comment',
-            description: 'Add a comment to a Sentry issue.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    issue_id: { type: 'string', description: 'The ID of the issue to comment on.' },
-                    comment_text: { type: 'string', description: 'The text content of the comment.' },
-                },
-                required: ['issue_id', 'comment_text'],
+          name: "get_sentry_event_details",
+          description:
+            "Retrieve details for a specific event ID within a project.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              project_slug: {
+                type: "string",
+                description: "The slug of the project.",
+              },
+              event_id: { type: "string", description: "The ID of the event." },
             },
+            required: ["project_slug", "event_id"],
+          },
+        },
+        {
+          name: "update_sentry_issue_status",
+          description: "Update the status of a Sentry issue.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              issue_id: {
+                type: "string",
+                description: "The ID of the issue to update.",
+              },
+              status: {
+                type: "string",
+                enum: ["resolved", "ignored", "unresolved"],
+                description: "The new status for the issue.",
+              },
+            },
+            required: ["issue_id", "status"],
+          },
+        },
+        {
+          name: "create_sentry_issue_comment",
+          description: "Add a comment to a Sentry issue.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              issue_id: {
+                type: "string",
+                description: "The ID of the issue to comment on.",
+              },
+              comment_text: {
+                type: "string",
+                description: "The text content of the comment.",
+              },
+            },
+            required: ["issue_id", "comment_text"],
+          },
         },
       ],
     }));
@@ -185,58 +226,153 @@ class SelfHostedSentryServer {
 
       try {
         // --- get_sentry_issue ---
-        if (toolName === 'get_sentry_issue') {
-          if (!isValidGetIssueArgs(args)) throw new McpError(ErrorCode.InvalidParams, 'Invalid args for get_sentry_issue.');
+        if (toolName === "get_sentry_issue") {
+          if (!isValidGetIssueArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for get_sentry_issue."
+            );
           const issueId = getIssueId(args.issue_id_or_url);
-          if (!issueId) throw new McpError(ErrorCode.InvalidParams, `Could not extract issue ID from: ${args.issue_id_or_url}`);
-          console.error(`Fetching Sentry issue ${issueId} from ${SENTRY_BASE_URL}`);
-          const response = await this.axiosInstance.get(`issues/${issueId}/`);
-          return { content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }] };
+          if (!issueId)
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              `Could not extract issue ID from: ${args.issue_id_or_url}`
+            );
+          console.error(
+            `Fetching Sentry issue ${issueId} from ${SENTRY_BASE_URL}`
+          );
+          const issueResponse = await this.axiosInstance.get(
+            `issues/${issueId}/`
+          );
+          const issueData = issueResponse.data;
+
+          const combinedData: any = { ...issueData, latest_event: null };
+
+          try {
+            console.error(
+              `Fetching latest event for issue ${issueId} in org ${ORG_SLUG}`
+            );
+            const eventResponse = await this.axiosInstance.get(
+              `organizations/${ORG_SLUG}/issues/${issueId}/events/latest/`
+            );
+            combinedData.latest_event = eventResponse.data;
+          } catch (eventError) {
+            console.warn(
+              `Could not fetch latest event for issue ${issueId}. It might not have any events or there was an API error.`,
+              eventError
+            );
+          }
+
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(combinedData, null, 2) },
+            ],
+          };
         }
         // --- list_sentry_projects ---
-        else if (toolName === 'list_sentry_projects') {
-            console.error(`Fetching projects for org ${ORG_SLUG}`);
-            const response = await this.axiosInstance.get(`organizations/${ORG_SLUG}/projects/`);
-            return { content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }] };
+        else if (toolName === "list_sentry_projects") {
+          console.error(`Fetching projects for org ${ORG_SLUG}`);
+          const response = await this.axiosInstance.get(
+            `organizations/${ORG_SLUG}/projects/`
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response.data, null, 2) },
+            ],
+          };
         }
         // --- list_sentry_issues ---
-        else if (toolName === 'list_sentry_issues') {
-            if (!isValidListIssuesArgs(args)) throw new McpError(ErrorCode.InvalidParams, 'Invalid args for list_sentry_issues.');
-            const params: Record<string, string> = {};
-            if (args.query) params.query = args.query;
-            if (args.status) params.query = (params.query ? params.query + ' ' : '') + `is:${args.status}`; // Append status to query
+        else if (toolName === "list_sentry_issues") {
+          if (!isValidListIssuesArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for list_sentry_issues."
+            );
+          const params: Record<string, string> = {};
+          if (args.query) params.query = args.query;
+          if (args.status)
+            params.query =
+              (params.query ? params.query + " " : "") + `is:${args.status}`; // Append status to query
 
-            console.error(`Fetching issues for project ${args.project_slug} in org ${ORG_SLUG} with params:`, params);
-            const response = await this.axiosInstance.get(`projects/${ORG_SLUG}/${args.project_slug}/issues/`, { params });
-            return { content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }] };
+          console.error(
+            `Fetching issues for project ${args.project_slug} in org ${ORG_SLUG} with params:`,
+            params
+          );
+          const response = await this.axiosInstance.get(
+            `projects/${ORG_SLUG}/${args.project_slug}/issues/`,
+            { params }
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response.data, null, 2) },
+            ],
+          };
         }
         // --- get_sentry_event_details ---
-         else if (toolName === 'get_sentry_event_details') {
-            if (!isValidGetEventArgs(args)) throw new McpError(ErrorCode.InvalidParams, 'Invalid args for get_sentry_event_details.');
-            console.error(`Fetching event ${args.event_id} for project ${args.project_slug} in org ${ORG_SLUG}`);
-            // Note: Sentry API might use issue ID for event context, or this endpoint might work. Adjust if needed.
-            const response = await this.axiosInstance.get(`projects/${ORG_SLUG}/${args.project_slug}/events/${args.event_id}/`);
-            return { content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }] };
+        else if (toolName === "get_sentry_event_details") {
+          if (!isValidGetEventArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for get_sentry_event_details."
+            );
+          console.error(
+            `Fetching event ${args.event_id} for project ${args.project_slug} in org ${ORG_SLUG}`
+          );
+          // Note: Sentry API might use issue ID for event context, or this endpoint might work. Adjust if needed.
+          const response = await this.axiosInstance.get(
+            `projects/${ORG_SLUG}/${args.project_slug}/events/${args.event_id}/`
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response.data, null, 2) },
+            ],
+          };
         }
         // --- update_sentry_issue_status ---
-        else if (toolName === 'update_sentry_issue_status') {
-            if (!isValidUpdateIssueArgs(args)) throw new McpError(ErrorCode.InvalidParams, 'Invalid args for update_sentry_issue_status.');
-            console.error(`Updating issue ${args.issue_id} status to ${args.status}`);
-            const response = await this.axiosInstance.put(`issues/${args.issue_id}/`, { status: args.status });
-            return { content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }] };
+        else if (toolName === "update_sentry_issue_status") {
+          if (!isValidUpdateIssueArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for update_sentry_issue_status."
+            );
+          console.error(
+            `Updating issue ${args.issue_id} status to ${args.status}`
+          );
+          const response = await this.axiosInstance.put(
+            `issues/${args.issue_id}/`,
+            { status: args.status }
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response.data, null, 2) },
+            ],
+          };
         }
         // --- create_sentry_issue_comment ---
-        else if (toolName === 'create_sentry_issue_comment') {
-            if (!isValidCreateCommentArgs(args)) throw new McpError(ErrorCode.InvalidParams, 'Invalid args for create_sentry_issue_comment.');
-            console.error(`Adding comment to issue ${args.issue_id}`);
-            const response = await this.axiosInstance.post(`issues/${args.issue_id}/comments/`, { text: args.comment_text });
-            return { content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }] };
+        else if (toolName === "create_sentry_issue_comment") {
+          if (!isValidCreateCommentArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for create_sentry_issue_comment."
+            );
+          console.error(`Adding comment to issue ${args.issue_id}`);
+          const response = await this.axiosInstance.post(
+            `issues/${args.issue_id}/comments/`,
+            { text: args.comment_text }
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response.data, null, 2) },
+            ],
+          };
         }
         // --- Unknown Tool ---
         else {
-          throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${toolName}`);
+          throw new McpError(
+            ErrorCode.MethodNotFound,
+            `Unknown tool: ${toolName}`
+          );
         }
-
       } catch (error) {
         console.error(`Error calling tool ${toolName}:`, error);
         let errorMessage = `Failed to execute tool ${toolName}.`;
@@ -245,29 +381,34 @@ class SelfHostedSentryServer {
         if (axios.isAxiosError(error)) {
           errorMessage = `Sentry API error for ${toolName}: ${error.message}`;
           if (error.response) {
-            errorMessage += ` Status: ${error.response.status}. Response: ${JSON.stringify(error.response.data)}`;
+            errorMessage += ` Status: ${
+              error.response.status
+            }. Response: ${JSON.stringify(error.response.data)}`;
             if (error.response.status >= 400 && error.response.status < 500) {
-                isClientError = true; // Indicate it's likely a bad request (permissions, not found, bad args)
-                if (error.response.status === 401 || error.response.status === 403) {
-                  errorMessage = `Sentry API permission denied for ${toolName}. Check auth token validity and permissions.`;
-                } else if (error.response.status === 404) {
-                  errorMessage = `Sentry resource not found for ${toolName}. Check IDs/slugs.`;
-                }
+              isClientError = true; // Indicate it's likely a bad request (permissions, not found, bad args)
+              if (
+                error.response.status === 401 ||
+                error.response.status === 403
+              ) {
+                errorMessage = `Sentry API permission denied for ${toolName}. Check auth token validity and permissions.`;
+              } else if (error.response.status === 404) {
+                errorMessage = `Sentry resource not found for ${toolName}. Check IDs/slugs.`;
+              }
             }
           }
         } else if (error instanceof McpError) {
-            // If it's already an McpError (like InvalidParams), re-throw it directly
-            throw error;
+          // If it's already an McpError (like InvalidParams), re-throw it directly
+          throw error;
         } else if (error instanceof Error) {
-            errorMessage = error.message;
+          errorMessage = error.message;
         }
 
         // Return structured error for MCP
         return {
-            content: [{ type: 'text', text: errorMessage }],
-            isError: true,
-            // Optionally use InvalidRequest for client-side errors (4xx)
-            // errorCode: isClientError ? ErrorCode.InvalidRequest : ErrorCode.InternalError
+          content: [{ type: "text", text: errorMessage }],
+          isError: true,
+          // Optionally use InvalidRequest for client-side errors (4xx)
+          // errorCode: isClientError ? ErrorCode.InvalidRequest : ErrorCode.InternalError
         };
       }
     });
