@@ -94,6 +94,15 @@ const isValidRawApiArgs = (args: any): args is { endpoint: string; method?: stri
     (args.body === undefined || typeof args.body === 'object') &&
     (args.grep_pattern === undefined || typeof args.grep_pattern === 'string');
 
+const isValidGetStackFramesArgs = (args: any): args is { project_slug: string; event_id: string; in_app_only?: boolean; max_frames?: number } =>
+    typeof args === 'object' && args !== null && typeof args.project_slug === 'string' && typeof args.event_id === 'string' &&
+    (args.in_app_only === undefined || typeof args.in_app_only === 'boolean') &&
+    (args.max_frames === undefined || typeof args.max_frames === 'number');
+
+const isValidCheckDsymArgs = (args: any): args is { project_slug: string; event_id?: string } =>
+    typeof args === 'object' && args !== null && typeof args.project_slug === 'string' &&
+    (args.event_id === undefined || typeof args.event_id === 'string');
+
 
 // --- Helper Functions ---
 const getIssueId = (input: string): string | null => {
@@ -360,8 +369,8 @@ class SelfHostedSentryServer {
     this.server = new Server(
       {
         name: 'sentry-selfhosted-mcp',
-        version: '0.3.0', // Added raw API tool for unfiltered access
-        description: 'MCP server for self-hosted Sentry instances with extended tools, filtering, and raw API access.',
+        version: '0.4.0', // Added structured tools and response size warnings
+        description: 'MCP server for self-hosted Sentry instances with extended tools, filtering, raw API access, and specialized debugging tools.',
       },
       { capabilities: { resources: { list: true }, tools: {} } }
     );
@@ -538,7 +547,7 @@ class SelfHostedSentryServer {
         },
         {
           name: "raw_sentry_api",
-          description: "Make a raw API call to any Sentry endpoint. Returns unfiltered JSON that agents can process with grep_pattern or other filters. Useful for debugging or accessing data not covered by other tools.",
+          description: "Make a raw API call to any Sentry endpoint. Returns unfiltered JSON that agents can process with grep_pattern or other filters. Useful for debugging or accessing data not covered by other tools. WARNING: Event endpoints can return 100K+ tokens. ALWAYS use grep_pattern for events to avoid token limits. Common patterns: '\"function\":|\"in_app\":' for stack frames, '\"type\":' for breadcrumbs.",
           inputSchema: {
             type: "object",
             properties: {
@@ -562,10 +571,56 @@ class SelfHostedSentryServer {
               },
               grep_pattern: {
                 type: "string",
-                description: "Optional: Regex pattern to filter response content. Returns only matching lines with context.",
+                description: "CRITICAL for event endpoints: Regex to filter response. Reduces 100K+ token responses to manageable size. Examples: '\"function\":|\"filename\":|\"in_app\":true' for stack traces, '\"breadcrumbs\"' for user actions, '\"tags\"' for metadata. Pattern matches return line + surrounding context.",
               },
             },
             required: ["endpoint"],
+          },
+        },
+        {
+          name: "get_stack_frames",
+          description: "Extract structured stack trace frames from an event. Optimized for debugging - returns only relevant frame info (function, file, line, in_app status) without noise. Much more efficient than raw_sentry_api for stack trace analysis.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              project_slug: {
+                type: "string",
+                description: "The slug of the project (e.g., 'apple-ios')",
+              },
+              event_id: {
+                type: "string",
+                description: "The event ID to extract stack frames from",
+              },
+              in_app_only: {
+                type: "boolean",
+                description: "Filter to only show frames from your application code (excludes system/library frames). Default: false",
+                default: false,
+              },
+              max_frames: {
+                type: "number",
+                description: "Maximum number of frames to return. Default: 50. Start from most recent (bottom of stack).",
+                default: 50,
+              },
+            },
+            required: ["project_slug", "event_id"],
+          },
+        },
+        {
+          name: "check_dsym_status",
+          description: "Check if debug symbols (dSYM files) are missing for iOS/macOS crashes. Missing dSYMs cause stack traces to show addresses instead of function names. Returns list of missing symbols with UUIDs for upload.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              project_slug: {
+                type: "string",
+                description: "The slug of the project (e.g., 'apple-ios')",
+              },
+              event_id: {
+                type: "string",
+                description: "Optional: Specific event ID to check. If not provided, checks recent events in project.",
+              },
+            },
+            required: ["project_slug"],
           },
         },
       ],
@@ -883,6 +938,21 @@ class SelfHostedSentryServer {
 
           let responseData = response.data;
 
+          // Check response size and warn if too large
+          const jsonString = JSON.stringify(responseData, null, 2);
+          const estimatedTokens = Math.ceil(jsonString.length / 4);
+
+          // Warn if response is large and no grep pattern is provided
+          if (estimatedTokens > 20000 && !args.grep_pattern) {
+            console.error(`WARNING: Response is ~${estimatedTokens} tokens, which may exceed limits. Consider using grep_pattern to filter.`);
+            return {
+              content: [{
+                type: "text",
+                text: `⚠️  WARNING: Response is approximately ${estimatedTokens} tokens (limit: 25,000).\n\nThis endpoint returns a large amount of data. Please use grep_pattern to filter the response.\n\nSuggested patterns:\n- Stack traces: '"function":|"filename":|"in_app":true'\n- Breadcrumbs: '"breadcrumbs"'\n- Tags/metadata: '"tags"'\n- Error details: '"type":|"value":'\n\nExample: Add grep_pattern: '"function":|"in_app":' to your request.`
+              }],
+            };
+          }
+
           // Apply grep filter if provided
           if (args.grep_pattern) {
             console.error(`Applying grep pattern filter: ${args.grep_pattern}`);
@@ -893,6 +963,145 @@ class SelfHostedSentryServer {
             content: [
               { type: "text", text: JSON.stringify(responseData, null, 2) },
             ],
+          };
+        }
+        // --- get_stack_frames ---
+        else if (toolName === "get_stack_frames") {
+          if (!isValidGetStackFramesArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for get_stack_frames."
+            );
+
+          console.error(`Extracting stack frames from event ${args.event_id} in project ${args.project_slug}`);
+
+          const response = await this.axiosInstance.get(
+            `projects/${ORG_SLUG}/${args.project_slug}/events/${args.event_id}/`
+          );
+
+          const eventData = response.data;
+          const frames: any[] = [];
+
+          // Extract frames from exception entries
+          if (eventData.entries && Array.isArray(eventData.entries)) {
+            for (const entry of eventData.entries) {
+              if (entry.type === 'exception' && entry.data?.values) {
+                for (const exc of entry.data.values) {
+                  if (exc.stacktrace?.frames) {
+                    for (const frame of exc.stacktrace.frames) {
+                      // Skip system frames if in_app_only is true
+                      if (args.in_app_only && !frame.in_app) {
+                        continue;
+                      }
+
+                      frames.push({
+                        function: frame.function || frame.rawFunction || '<unknown>',
+                        filename: frame.filename || frame.absPath || null,
+                        line_no: frame.lineNo || null,
+                        col_no: frame.colNo || null,
+                        in_app: frame.in_app || false,
+                        module: frame.module || null,
+                        package: frame.package || null,
+                        instruction_addr: frame.instructionAddr || null,
+                        symbol_addr: frame.symbolAddr || null,
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Limit to max_frames, keeping the most recent (bottom of stack)
+          const maxFrames = args.max_frames || 50;
+          const limitedFrames = frames.slice(-maxFrames);
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                event_id: args.event_id,
+                total_frames: frames.length,
+                returned_frames: limitedFrames.length,
+                in_app_only: args.in_app_only || false,
+                frames: limitedFrames
+              }, null, 2)
+            }],
+          };
+        }
+        // --- check_dsym_status ---
+        else if (toolName === "check_dsym_status") {
+          if (!isValidCheckDsymArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for check_dsym_status."
+            );
+
+          console.error(`Checking dSYM status for project ${args.project_slug}`);
+
+          let eventData;
+
+          if (args.event_id) {
+            // Check specific event
+            const response = await this.axiosInstance.get(
+              `projects/${ORG_SLUG}/${args.project_slug}/events/${args.event_id}/`
+            );
+            eventData = response.data;
+          } else {
+            // Get recent events and check the first one
+            const issuesResponse = await this.axiosInstance.get(
+              `projects/${ORG_SLUG}/${args.project_slug}/issues/`,
+              { params: { limit: 1 } }
+            );
+
+            if (!issuesResponse.data || issuesResponse.data.length === 0) {
+              return {
+                content: [{
+                  type: "text",
+                  text: "No recent issues found in project. Cannot check dSYM status."
+                }],
+              };
+            }
+
+            const issueId = issuesResponse.data[0].id;
+            const eventResponse = await this.axiosInstance.get(
+              `organizations/${ORG_SLUG}/issues/${issueId}/events/latest/`
+            );
+            eventData = eventResponse.data;
+          }
+
+          // Check for dSYM errors
+          const missingDsyms: any[] = [];
+          if (eventData.errors && Array.isArray(eventData.errors)) {
+            for (const error of eventData.errors) {
+              if (error.type === 'native_missing_dsym' || error.type === 'proguard_missing_mapping') {
+                missingDsyms.push({
+                  type: error.type,
+                  message: error.message,
+                  image_path: error.data?.image_path,
+                  image_uuid: error.data?.image_uuid,
+                  image_name: error.data?.image_name,
+                });
+              }
+            }
+          }
+
+          const hasMissingSymbols = missingDsyms.length > 0;
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                project: args.project_slug,
+                event_id: eventData.eventID || args.event_id,
+                has_missing_symbols: hasMissingSymbols,
+                missing_count: missingDsyms.length,
+                missing_symbols: missingDsyms,
+                recommendation: hasMissingSymbols
+                  ? "Upload missing dSYM files to Sentry to see full function names in stack traces. Use 'sentry-cli upload-dif' command."
+                  : "All debug symbols are present for this event."
+              }, null, 2)
+            }],
           };
         }
         // --- Unknown Tool ---
