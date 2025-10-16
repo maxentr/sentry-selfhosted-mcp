@@ -5,6 +5,7 @@ import {
   CallToolRequestSchema,
   ErrorCode,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import axios, { AxiosError } from 'axios';
@@ -51,16 +52,22 @@ const SENTRY_BASE_URL = SENTRY_URL.endsWith('/') ? SENTRY_URL.slice(0, -1) : SEN
 const ORG_SLUG = process.env.SENTRY_ORG_SLUG; // Use the potentially inferred value
 
 // --- Argument Type Guards ---
-const isValidGetIssueArgs = (args: any): args is { issue_id_or_url: string } =>
-  typeof args === 'object' && args !== null && typeof args.issue_id_or_url === 'string';
+const isValidGetIssueArgs = (args: any): args is { issue_id_or_url: string; include_latest_event?: boolean } =>
+  typeof args === 'object' && args !== null && typeof args.issue_id_or_url === 'string' &&
+  (args.include_latest_event === undefined || typeof args.include_latest_event === 'boolean');
 
-const isValidListIssuesArgs = (args: any): args is { project_slug: string; query?: string; status?: string } =>
+const isValidListIssuesArgs = (args: any): args is { project_slug: string; query?: string; status?: string; limit?: number; cursor?: string } =>
   typeof args === 'object' && args !== null && typeof args.project_slug === 'string' &&
   (args.query === undefined || typeof args.query === 'string') &&
-  (args.status === undefined || typeof args.status === 'string');
+  (args.status === undefined || typeof args.status === 'string') &&
+  (args.limit === undefined || (typeof args.limit === 'number' && args.limit > 0 && args.limit <= 100)) &&
+  (args.cursor === undefined || typeof args.cursor === 'string');
 
-const isValidGetEventArgs = (args: any): args is { project_slug: string; event_id: string } =>
-    typeof args === 'object' && args !== null && typeof args.project_slug === 'string' && typeof args.event_id === 'string';
+const isValidGetEventArgs = (args: any): args is { project_slug: string; event_id: string; limit?: number; offset?: number; entry_type?: string } =>
+    typeof args === 'object' && args !== null && typeof args.project_slug === 'string' && typeof args.event_id === 'string' &&
+    (args.limit === undefined || (typeof args.limit === 'number' && args.limit > 0)) &&
+    (args.offset === undefined || (typeof args.offset === 'number' && args.offset >= 0)) &&
+    (args.entry_type === undefined || typeof args.entry_type === 'string');
 
 const isValidUpdateIssueArgs = (args: any): args is { issue_id: string; status: 'resolved' | 'ignored' | 'unresolved' } =>
     typeof args === 'object' && args !== null && typeof args.issue_id === 'string' &&
@@ -86,6 +93,129 @@ const getIssueId = (input: string): string | null => {
   return null;
 };
 
+// Helper to extract only essential fields from Sentry issue data
+const extractEssentialIssueFields = (issueData: any): any => {
+  const essential: any = {
+    id: issueData.id,
+    shortId: issueData.shortId,
+    title: issueData.title,
+    culprit: issueData.culprit,
+    permalink: issueData.permalink,
+    logger: issueData.logger,
+    level: issueData.level,
+    status: issueData.status,
+    type: issueData.type,
+    platform: issueData.platform,
+    project: issueData.project,
+    count: issueData.count,
+    userCount: issueData.userCount,
+    firstSeen: issueData.firstSeen,
+    lastSeen: issueData.lastSeen,
+    metadata: issueData.metadata,
+  };
+  
+  // Add a note about truncation
+  if (issueData.annotations || issueData.context || issueData.tags) {
+    essential._note = "Full issue details truncated. Use get_sentry_event_details for stack traces and event data.";
+  }
+  
+  return essential;
+};
+
+// Helper to extract essential fields from event entries
+const extractEssentialEventEntry = (entry: any): any => {
+  if (entry.type === 'exception' && entry.data?.values) {
+    return {
+      type: entry.type,
+      data: {
+        values: entry.data.values.map((exc: any) => ({
+          type: exc.type,
+          value: exc.value,
+          mechanism: exc.mechanism,
+          stacktrace: exc.stacktrace ? {
+            frames: exc.stacktrace.frames?.slice(-5).map((frame: any) => ({
+              filename: frame.filename,
+              function: frame.function,
+              lineNo: frame.lineNo,
+              colNo: frame.colNo,
+              absPath: frame.absPath,
+              context: frame.context?.slice(-3, 4), // 3 lines before and after
+              vars: Object.keys(frame.vars || {}).length > 0 ? '...' : undefined
+            }))
+          } : undefined
+        }))
+      }
+    };
+  }
+  
+  if (entry.type === 'message') {
+    return entry;
+  }
+  
+  if (entry.type === 'breadcrumbs' && entry.data?.values) {
+    return {
+      type: entry.type,
+      data: {
+        values: entry.data.values.slice(-10) // Last 10 breadcrumbs
+      }
+    };
+  }
+  
+  return {
+    type: entry.type,
+    _truncated: true
+  };
+};
+
+// Helper to truncate large responses with pagination info
+const truncateResponse = (data: any, maxTokens: number = 15000): { data: any; truncated: boolean; pagination_info?: string } => {
+  const jsonString = JSON.stringify(data, null, 2);
+  
+  // Rough token estimation (1 token ≈ 4 characters for JSON)
+  const estimatedTokens = Math.ceil(jsonString.length / 4);
+  
+  if (estimatedTokens <= maxTokens) {
+    return { data, truncated: false };
+  }
+  
+  // If it's an array, truncate by removing items
+  if (Array.isArray(data)) {
+    const itemsToKeep = Math.floor(data.length * (maxTokens / estimatedTokens));
+    const truncatedData = data.slice(0, Math.max(1, itemsToKeep));
+    return {
+      data: truncatedData,
+      truncated: true,
+      pagination_info: `Response truncated. Showing ${truncatedData.length} of ${data.length} items. Use limit and cursor/offset parameters to paginate through all results.`
+    };
+  }
+  
+  // If it's an object with large nested structures, try to truncate specific fields
+  if (typeof data === 'object' && data !== null) {
+    const truncatedData = { ...data };
+    
+    // Common large fields in Sentry responses
+    const largeFields = ['entries', 'stacktrace', 'frames', 'breadcrumbs', 'contexts', 'tags', 'extra'];
+    
+    for (const field of largeFields) {
+      if (truncatedData[field] && Array.isArray(truncatedData[field])) {
+        const originalLength = truncatedData[field].length;
+        if (originalLength > 10) {
+          truncatedData[field] = truncatedData[field].slice(0, 10);
+          truncatedData[`${field}_truncated`] = `Showing 10 of ${originalLength} entries. Use pagination parameters to get more.`;
+        }
+      }
+    }
+    
+    return {
+      data: truncatedData,
+      truncated: true,
+      pagination_info: "Response truncated due to size. Use limit and offset parameters to paginate through large nested data."
+    };
+  }
+  
+  return { data, truncated: false };
+};
+
 // --- Main Server Class ---
 class SelfHostedSentryServer {
   private server: Server;
@@ -98,7 +228,7 @@ class SelfHostedSentryServer {
         version: '0.2.0', // Incremented version
         description: 'MCP server for self-hosted Sentry instances with extended tools.',
       },
-      { capabilities: { resources: {}, tools: {} } }
+      { capabilities: { resources: { list: true }, tools: {} } }
     );
 
     this.axiosInstance = axios.create({
@@ -108,6 +238,7 @@ class SelfHostedSentryServer {
     });
 
     this.setupToolHandlers();
+    this.setupResourceHandlers();
     this.server.onerror = (error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => { await this.server.close(); process.exit(0); });
   }
@@ -119,7 +250,7 @@ class SelfHostedSentryServer {
         {
           name: "get_sentry_issue",
           description:
-            "Retrieve details for a specific Sentry issue by ID or URL, including the stacktrace from the latest event.",
+            "Retrieve details for a specific Sentry issue by ID or URL, including the stacktrace from the latest event. IMPORTANT: Responses are automatically truncated to avoid token limits.",
           inputSchema: {
             type: "object",
             properties: {
@@ -127,6 +258,11 @@ class SelfHostedSentryServer {
                 type: "string",
                 description:
                   "Sentry issue ID or full issue URL. Issue ID is a number e.g: 123456",
+              },
+              include_latest_event: {
+                type: "boolean",
+                description: "Include latest event details (default: false to reduce response size)",
+                default: false,
               },
             },
             required: ["issue_id_or_url"],
@@ -141,7 +277,7 @@ class SelfHostedSentryServer {
         {
           name: "list_sentry_issues",
           description:
-            "List issues for a specific project, optionally filtering by query or status.",
+            "List issues for a specific project, optionally filtering by query or status. Supports pagination for large result sets.",
           inputSchema: {
             type: "object",
             properties: {
@@ -159,6 +295,16 @@ class SelfHostedSentryServer {
                 enum: ["resolved", "unresolved", "ignored"],
                 description: "Optional issue status filter.",
               },
+              limit: {
+                type: "number",
+                description: "Maximum number of issues to return (1-100, default: 25).",
+                minimum: 1,
+                maximum: 100,
+              },
+              cursor: {
+                type: "string",
+                description: "Pagination cursor from previous response for getting next page.",
+              },
             },
             required: ["project_slug"],
           },
@@ -166,7 +312,7 @@ class SelfHostedSentryServer {
         {
           name: "get_sentry_event_details",
           description:
-            "Retrieve details for a specific event ID within a project.",
+            "Retrieve details for a specific event ID within a project. IMPORTANT: For large events, always use limit parameter (e.g., limit: 10) to avoid token limits. Use offset for pagination.",
           inputSchema: {
             type: "object",
             properties: {
@@ -175,6 +321,23 @@ class SelfHostedSentryServer {
                 description: "The slug of the project.",
               },
               event_id: { type: "string", description: "The ID of the event." },
+              limit: {
+                type: "number",
+                description: "RECOMMENDED: Limit the number of entries returned (e.g., 10 for large stack traces). Use this to avoid exceeding token limits.",
+                minimum: 1,
+                default: 10,
+              },
+              offset: {
+                type: "number",
+                description: "Offset for pagination through event entries. Start with 0, then use 10, 20, etc.",
+                minimum: 0,
+                default: 0,
+              },
+              entry_type: {
+                type: "string",
+                description: "Filter to only get specific entry type (e.g., 'exception', 'message', 'breadcrumbs'). By default returns most important entries.",
+                enum: ["exception", "message", "breadcrumbs", "request", "threads", "debugmeta", "contexts"],
+              },
             },
             required: ["project_slug", "event_id"],
           },
@@ -244,28 +407,41 @@ class SelfHostedSentryServer {
           const issueResponse = await this.axiosInstance.get(
             `issues/${issueId}/`
           );
-          const issueData = issueResponse.data;
+          
+          // Extract only essential fields to reduce response size
+          let issueData = extractEssentialIssueFields(issueResponse.data);
 
-          const combinedData: any = { ...issueData, latest_event: null };
-
-          try {
-            console.error(
-              `Fetching latest event for issue ${issueId} in org ${ORG_SLUG}`
-            );
-            const eventResponse = await this.axiosInstance.get(
-              `organizations/${ORG_SLUG}/issues/${issueId}/events/latest/`
-            );
-            combinedData.latest_event = eventResponse.data;
-          } catch (eventError) {
-            console.warn(
-              `Could not fetch latest event for issue ${issueId}. It might not have any events or there was an API error.`,
-              eventError
-            );
+          // Only include latest event if explicitly requested
+          if (args.include_latest_event) {
+            try {
+              console.error(
+                `Fetching latest event for issue ${issueId} in org ${ORG_SLUG}`
+              );
+              const eventResponse = await this.axiosInstance.get(
+                `organizations/${ORG_SLUG}/issues/${issueId}/events/latest/`
+              );
+              
+              // Extract only essential event data
+              if (eventResponse.data.entries) {
+                issueData.latest_event = {
+                  id: eventResponse.data.id,
+                  eventID: eventResponse.data.eventID,
+                  dateCreated: eventResponse.data.dateCreated,
+                  entries: eventResponse.data.entries.slice(0, 3).map(extractEssentialEventEntry),
+                  _note: "Event truncated. Use get_sentry_event_details for full event data."
+                };
+              }
+            } catch (eventError) {
+              console.warn(
+                `Could not fetch latest event for issue ${issueId}. It might not have any events or there was an API error.`,
+                eventError
+              );
+            }
           }
 
           return {
             content: [
-              { type: "text", text: JSON.stringify(combinedData, null, 2) },
+              { type: "text", text: JSON.stringify(issueData, null, 2) },
             ],
           };
         }
@@ -288,11 +464,18 @@ class SelfHostedSentryServer {
               ErrorCode.InvalidParams,
               "Invalid args for list_sentry_issues."
             );
-          const params: Record<string, string> = {};
+          const params: Record<string, string | number> = {};
           if (args.query) params.query = args.query;
           if (args.status)
             params.query =
               (params.query ? params.query + " " : "") + `is:${args.status}`; // Append status to query
+          
+          // Add pagination parameters - Sentry API uses 'limit' and 'cursor'
+          if (args.limit) params.limit = args.limit;
+          if (args.cursor) params.cursor = args.cursor;
+          
+          // Default to a reasonable limit if not specified
+          if (!params.limit) params.limit = 25;
 
           console.error(
             `Fetching issues for project ${args.project_slug} in org ${ORG_SLUG} with params:`,
@@ -302,9 +485,18 @@ class SelfHostedSentryServer {
             `projects/${ORG_SLUG}/${args.project_slug}/issues/`,
             { params }
           );
+          
+          // Apply truncation if response is still too large
+          const { data: responseData, truncated, pagination_info } = truncateResponse(response.data);
+          
+          let resultText = JSON.stringify(responseData, null, 2);
+          if (truncated && pagination_info) {
+            resultText = `${pagination_info}\n\n${resultText}`;
+          }
+          
           return {
             content: [
-              { type: "text", text: JSON.stringify(response.data, null, 2) },
+              { type: "text", text: resultText },
             ],
           };
         }
@@ -318,13 +510,90 @@ class SelfHostedSentryServer {
           console.error(
             `Fetching event ${args.event_id} for project ${args.project_slug} in org ${ORG_SLUG}`
           );
-          // Note: Sentry API might use issue ID for event context, or this endpoint might work. Adjust if needed.
+          
           const response = await this.axiosInstance.get(
             `projects/${ORG_SLUG}/${args.project_slug}/events/${args.event_id}/`
           );
+          
+          let eventData = response.data;
+          
+          // Apply pagination to large nested arrays - default to safe limits
+          const offset = args.offset || 0;
+          const limit = args.limit || 5; // Default to 5 entries to avoid token limits
+            
+          // Apply smart filtering and extraction to entries
+          if (eventData.entries && Array.isArray(eventData.entries)) {
+            const totalEntries = eventData.entries.length;
+            let selectedEntries = [];
+            
+            if (args.entry_type) {
+              // Filter to specific entry type
+              selectedEntries = eventData.entries
+                .filter((e: any) => e.type === args.entry_type)
+                .slice(offset, offset + limit);
+                
+              if (selectedEntries.length === 0) {
+                eventData.entries = [];
+                eventData.error = `No entries of type '${args.entry_type}' found. Available types: ${[...new Set(eventData.entries.map((e: any) => e.type))].join(', ')}`;
+              }
+            } else {
+              // Smart selection: prioritize important entry types
+              const priorityTypes = ['exception', 'message', 'breadcrumbs', 'request'];
+              const importantEntries = [];
+              
+              // First, get the most important entry types
+              for (const type of priorityTypes) {
+                const entry = eventData.entries.find((e: any) => e.type === type);
+                if (entry && importantEntries.length < limit) {
+                  importantEntries.push(entry);
+                }
+              }
+              
+              // If we still have room, add other entries
+              if (importantEntries.length < limit) {
+                const otherEntries = eventData.entries
+                  .filter((e: any) => !priorityTypes.includes(e.type))
+                  .slice(0, limit - importantEntries.length);
+                importantEntries.push(...otherEntries);
+              }
+              
+              selectedEntries = importantEntries;
+            }
+            
+            // Apply smart extraction to reduce size
+            eventData.entries = selectedEntries.map(extractEssentialEventEntry);
+            
+            eventData.pagination_info = {
+              total_entries: totalEntries,
+              showing: eventData.entries.length,
+              entry_types: eventData.entries.map((e: any) => e.type),
+              available_types: [...new Set(eventData.entries.map((e: any) => e.type))],
+              tip: args.entry_type ? 
+                `Showing only '${args.entry_type}' entries. Remove entry_type parameter to see prioritized entries.` :
+                "Showing prioritized entries. Use entry_type='exception' to see only stack traces."
+            };
+          }
+          
+          // Remove other large fields that might be present
+          const fieldsToRemove = ['sdk', 'packages', 'contexts', 'user', 'request', 'environment'];
+          for (const field of fieldsToRemove) {
+            if (eventData[field]) {
+              eventData[`_${field}_removed`] = true;
+              delete eventData[field];
+            }
+          }
+          
+          // Apply additional truncation if response is still too large
+          const { data: responseData, truncated, pagination_info } = truncateResponse(eventData);
+          
+          let resultText = JSON.stringify(responseData, null, 2);
+          if (truncated && pagination_info) {
+            resultText = `${pagination_info}\n\n${resultText}`;
+          }
+          
           return {
             content: [
-              { type: "text", text: JSON.stringify(response.data, null, 2) },
+              { type: "text", text: resultText },
             ],
           };
         }
@@ -411,6 +680,20 @@ class SelfHostedSentryServer {
           // errorCode: isClientError ? ErrorCode.InvalidRequest : ErrorCode.InternalError
         };
       }
+    });
+  }
+
+  private setupResourceHandlers() {
+    // --- List Resources ---
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      // For now, we'll return an empty array since we don't have any resources
+      // In the future, this could return things like:
+      // - sentry:projects/<org>/projects - List of projects
+      // - sentry:issues/<org>/<project> - Issues for a project
+      // - sentry:events/<org>/<project> - Events for a project
+      return {
+        resources: []
+      };
     });
   }
 
