@@ -1,7 +1,7 @@
 {
   "name": "sentry-selfhosted-mcp",
-  "version": "0.2.1",
-  "description": "Model context protocol server for self hosted sentry instances. ",
+  "version": "0.3.0",
+  "description": "Model context protocol server for self hosted sentry instances with raw API access. ",
   "private": true,
   "type": "module",
   "bin": {

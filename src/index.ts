@@ -87,6 +87,13 @@ const isValidUpdateIssueArgs = (args: any): args is { issue_id: string; status: 
 const isValidCreateCommentArgs = (args: any): args is { issue_id: string; comment_text: string } =>
     typeof args === 'object' && args !== null && typeof args.issue_id === 'string' && typeof args.comment_text === 'string';
 
+const isValidRawApiArgs = (args: any): args is { endpoint: string; method?: string; params?: Record<string, any>; body?: any; grep_pattern?: string } =>
+    typeof args === 'object' && args !== null && typeof args.endpoint === 'string' &&
+    (args.method === undefined || typeof args.method === 'string') &&
+    (args.params === undefined || typeof args.params === 'object') &&
+    (args.body === undefined || typeof args.body === 'object') &&
+    (args.grep_pattern === undefined || typeof args.grep_pattern === 'string');
+
 
 // --- Helper Functions ---
 const getIssueId = (input: string): string | null => {
@@ -353,8 +360,8 @@ class SelfHostedSentryServer {
     this.server = new Server(
       {
         name: 'sentry-selfhosted-mcp',
-        version: '0.2.1', // Added filtering capabilities
-        description: 'MCP server for self-hosted Sentry instances with extended tools and filtering.',
+        version: '0.3.0', // Added raw API tool for unfiltered access
+        description: 'MCP server for self-hosted Sentry instances with extended tools, filtering, and raw API access.',
       },
       { capabilities: { resources: { list: true }, tools: {} } }
     );
@@ -527,6 +534,38 @@ class SelfHostedSentryServer {
               },
             },
             required: ["issue_id", "comment_text"],
+          },
+        },
+        {
+          name: "raw_sentry_api",
+          description: "Make a raw API call to any Sentry endpoint. Returns unfiltered JSON that agents can process with grep_pattern or other filters. Useful for debugging or accessing data not covered by other tools.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              endpoint: {
+                type: "string",
+                description: "API endpoint path (e.g., 'projects/beoflow/apple-ios/events/abc123/'). Do NOT include /api/0/ prefix.",
+              },
+              method: {
+                type: "string",
+                enum: ["GET", "POST", "PUT", "DELETE"],
+                description: "HTTP method (default: GET)",
+                default: "GET",
+              },
+              params: {
+                type: "object",
+                description: "URL query parameters as key-value pairs",
+              },
+              body: {
+                type: "object",
+                description: "Request body for POST/PUT requests",
+              },
+              grep_pattern: {
+                type: "string",
+                description: "Optional: Regex pattern to filter response content. Returns only matching lines with context.",
+              },
+            },
+            required: ["endpoint"],
           },
         },
       ],
@@ -801,6 +840,58 @@ class SelfHostedSentryServer {
           return {
             content: [
               { type: "text", text: JSON.stringify(response.data, null, 2) },
+            ],
+          };
+        }
+        // --- raw_sentry_api ---
+        else if (toolName === "raw_sentry_api") {
+          if (!isValidRawApiArgs(args))
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid args for raw_sentry_api."
+            );
+
+          const method = (args.method || 'GET').toUpperCase();
+          console.error(`Raw API ${method} request to ${args.endpoint}`);
+
+          let response;
+          const config: any = {};
+
+          if (args.params) {
+            config.params = args.params;
+          }
+
+          switch (method) {
+            case 'GET':
+              response = await this.axiosInstance.get(args.endpoint, config);
+              break;
+            case 'POST':
+              response = await this.axiosInstance.post(args.endpoint, args.body || {}, config);
+              break;
+            case 'PUT':
+              response = await this.axiosInstance.put(args.endpoint, args.body || {}, config);
+              break;
+            case 'DELETE':
+              response = await this.axiosInstance.delete(args.endpoint, config);
+              break;
+            default:
+              throw new McpError(
+                ErrorCode.InvalidParams,
+                `Unsupported HTTP method: ${method}`
+              );
+          }
+
+          let responseData = response.data;
+
+          // Apply grep filter if provided
+          if (args.grep_pattern) {
+            console.error(`Applying grep pattern filter: ${args.grep_pattern}`);
+            responseData = grepFilter(responseData, args.grep_pattern);
+          }
+
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(responseData, null, 2) },
             ],
           };
         }
