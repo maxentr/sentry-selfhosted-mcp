@@ -52,9 +52,20 @@ const SENTRY_BASE_URL = SENTRY_URL.endsWith('/') ? SENTRY_URL.slice(0, -1) : SEN
 const ORG_SLUG = process.env.SENTRY_ORG_SLUG; // Use the potentially inferred value
 
 // --- Argument Type Guards ---
-const isValidGetIssueArgs = (args: any): args is { issue_id_or_url: string; include_latest_event?: boolean } =>
+const isValidGetIssueArgs = (args: any): args is {
+  issue_id_or_url: string;
+  include_latest_event?: boolean;
+  include_fields?: string[];
+  exclude_fields?: string[];
+  grep_pattern?: string;
+  max_stack_frames?: number;
+} =>
   typeof args === 'object' && args !== null && typeof args.issue_id_or_url === 'string' &&
-  (args.include_latest_event === undefined || typeof args.include_latest_event === 'boolean');
+  (args.include_latest_event === undefined || typeof args.include_latest_event === 'boolean') &&
+  (args.include_fields === undefined || Array.isArray(args.include_fields)) &&
+  (args.exclude_fields === undefined || Array.isArray(args.exclude_fields)) &&
+  (args.grep_pattern === undefined || typeof args.grep_pattern === 'string') &&
+  (args.max_stack_frames === undefined || typeof args.max_stack_frames === 'number');
 
 const isValidListIssuesArgs = (args: any): args is { project_slug: string; query?: string; status?: string; limit?: number; cursor?: string } =>
   typeof args === 'object' && args !== null && typeof args.project_slug === 'string' &&
@@ -113,12 +124,12 @@ const extractEssentialIssueFields = (issueData: any): any => {
     lastSeen: issueData.lastSeen,
     metadata: issueData.metadata,
   };
-  
+
   // Add a note about truncation
   if (issueData.annotations || issueData.context || issueData.tags) {
     essential._note = "Full issue details truncated. Use get_sentry_event_details for stack traces and event data.";
   }
-  
+
   return essential;
 };
 
@@ -147,11 +158,11 @@ const extractEssentialEventEntry = (entry: any): any => {
       }
     };
   }
-  
+
   if (entry.type === 'message') {
     return entry;
   }
-  
+
   if (entry.type === 'breadcrumbs' && entry.data?.values) {
     return {
       type: entry.type,
@@ -160,7 +171,7 @@ const extractEssentialEventEntry = (entry: any): any => {
       }
     };
   }
-  
+
   return {
     type: entry.type,
     _truncated: true
@@ -170,14 +181,14 @@ const extractEssentialEventEntry = (entry: any): any => {
 // Helper to truncate large responses with pagination info
 const truncateResponse = (data: any, maxTokens: number = 15000): { data: any; truncated: boolean; pagination_info?: string } => {
   const jsonString = JSON.stringify(data, null, 2);
-  
+
   // Rough token estimation (1 token ≈ 4 characters for JSON)
   const estimatedTokens = Math.ceil(jsonString.length / 4);
-  
+
   if (estimatedTokens <= maxTokens) {
     return { data, truncated: false };
   }
-  
+
   // If it's an array, truncate by removing items
   if (Array.isArray(data)) {
     const itemsToKeep = Math.floor(data.length * (maxTokens / estimatedTokens));
@@ -188,14 +199,14 @@ const truncateResponse = (data: any, maxTokens: number = 15000): { data: any; tr
       pagination_info: `Response truncated. Showing ${truncatedData.length} of ${data.length} items. Use limit and cursor/offset parameters to paginate through all results.`
     };
   }
-  
+
   // If it's an object with large nested structures, try to truncate specific fields
   if (typeof data === 'object' && data !== null) {
     const truncatedData = { ...data };
-    
+
     // Common large fields in Sentry responses
     const largeFields = ['entries', 'stacktrace', 'frames', 'breadcrumbs', 'contexts', 'tags', 'extra'];
-    
+
     for (const field of largeFields) {
       if (truncatedData[field] && Array.isArray(truncatedData[field])) {
         const originalLength = truncatedData[field].length;
@@ -205,15 +216,132 @@ const truncateResponse = (data: any, maxTokens: number = 15000): { data: any; tr
         }
       }
     }
-    
+
     return {
       data: truncatedData,
       truncated: true,
       pagination_info: "Response truncated due to size. Use limit and offset parameters to paginate through large nested data."
     };
   }
-  
+
   return { data, truncated: false };
+};
+
+// Filter object fields based on include/exclude lists
+const filterObjectFields = (obj: any, includeFields?: string[], excludeFields?: string[]): any => {
+  if (!obj || typeof obj !== 'object') return obj;
+
+  // Handle arrays
+  if (Array.isArray(obj)) {
+    return obj.map(item => filterObjectFields(item, includeFields, excludeFields));
+  }
+
+  let result: any = {};
+
+  // If include fields specified, only include those
+  if (includeFields && includeFields.length > 0) {
+    for (const field of includeFields) {
+      if (field.includes('.')) {
+        // Handle nested field paths like "latest_event.entries"
+        const [parent, ...rest] = field.split('.');
+        if (obj[parent] !== undefined) {
+          if (!result[parent]) result[parent] = {};
+          const childField = rest.join('.');
+          result[parent] = filterObjectFields(obj[parent], [childField], undefined);
+        }
+      } else if (obj[field] !== undefined) {
+        result[field] = obj[field];
+      }
+    }
+  } else {
+    // Start with all fields
+    result = { ...obj };
+
+    // Remove excluded fields
+    if (excludeFields && excludeFields.length > 0) {
+      for (const field of excludeFields) {
+        if (field.includes('.')) {
+          // Handle nested field paths
+          const [parent, ...rest] = field.split('.');
+          if (result[parent]) {
+            const childField = rest.join('.');
+            result[parent] = filterObjectFields(result[parent], undefined, [childField]);
+          }
+        } else {
+          delete result[field];
+        }
+      }
+    }
+  }
+
+  return result;
+};
+
+// Apply grep pattern filtering to JSON content
+const grepFilter = (data: any, pattern: string): any => {
+  const regex = new RegExp(pattern, 'gi');
+  const jsonStr = JSON.stringify(data, null, 2);
+  const lines = jsonStr.split('\n');
+  const matchingLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (regex.test(lines[i])) {
+      // Include context (previous and next line)
+      if (i > 0) matchingLines.push(lines[i - 1]);
+      matchingLines.push(lines[i]);
+      if (i < lines.length - 1) matchingLines.push(lines[i + 1]);
+    }
+  }
+
+  // Try to parse the filtered content, fall back to text if invalid JSON
+  const filtered = matchingLines.join('\n');
+  try {
+    return JSON.parse(filtered);
+  } catch {
+    return { grep_results: matchingLines, original_pattern: pattern };
+  }
+};
+
+// Truncate stack traces to specified number of frames
+const truncateStackTraces = (data: any, maxFrames: number): any => {
+  if (!data || typeof data !== 'object') return data;
+
+  // Handle arrays
+  if (Array.isArray(data)) {
+    return data.map(item => truncateStackTraces(item, maxFrames));
+  }
+
+  // Clone the object
+  const result = { ...data };
+
+  // Look for stack trace patterns
+  if (result.entries && Array.isArray(result.entries)) {
+    result.entries = result.entries.map((entry: any) => {
+      if (entry.type === 'exception' && entry.data?.values) {
+        entry.data.values = entry.data.values.map((value: any) => {
+          if (value.stacktrace?.frames && Array.isArray(value.stacktrace.frames)) {
+            // Keep only the most relevant frames (usually the last ones are most relevant)
+            const frames = value.stacktrace.frames;
+            if (frames.length > maxFrames) {
+              value.stacktrace.frames = frames.slice(-maxFrames);
+              value.stacktrace.frames_omitted = frames.length - maxFrames;
+            }
+          }
+          return value;
+        });
+      }
+      return entry;
+    });
+  }
+
+  // Recursively process nested objects
+  for (const key in result) {
+    if (typeof result[key] === 'object') {
+      result[key] = truncateStackTraces(result[key], maxFrames);
+    }
+  }
+
+  return result;
 };
 
 // --- Main Server Class ---
@@ -225,8 +353,8 @@ class SelfHostedSentryServer {
     this.server = new Server(
       {
         name: 'sentry-selfhosted-mcp',
-        version: '0.2.0', // Incremented version
-        description: 'MCP server for self-hosted Sentry instances with extended tools.',
+        version: '0.2.1', // Added filtering capabilities
+        description: 'MCP server for self-hosted Sentry instances with extended tools and filtering.',
       },
       { capabilities: { resources: { list: true }, tools: {} } }
     );
@@ -250,7 +378,7 @@ class SelfHostedSentryServer {
         {
           name: "get_sentry_issue",
           description:
-            "Retrieve details for a specific Sentry issue by ID or URL, including the stacktrace from the latest event. IMPORTANT: Responses are automatically truncated to avoid token limits.",
+            "Retrieve details for a specific Sentry issue by ID or URL, including the stacktrace from the latest event. Supports filtering and automatic truncation to reduce response size.",
           inputSchema: {
             type: "object",
             properties: {
@@ -263,6 +391,28 @@ class SelfHostedSentryServer {
                 type: "boolean",
                 description: "Include latest event details (default: false to reduce response size)",
                 default: false,
+              },
+              include_fields: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "Optional: List of fields to include (whitelist). Use dot notation for nested fields (e.g., 'latest_event.entries'). If specified, only these fields will be returned.",
+              },
+              exclude_fields: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "Optional: List of fields to exclude (blacklist). Use dot notation for nested fields. Applied only if include_fields is not specified.",
+              },
+              grep_pattern: {
+                type: "string",
+                description:
+                  "Optional: Regex pattern to filter response content. Returns only matching lines with context.",
+              },
+              max_stack_frames: {
+                type: "number",
+                description:
+                  "Optional: Maximum number of stack trace frames to return (default: all). Keeps the most relevant (bottom) frames.",
               },
             },
             required: ["issue_id_or_url"],
@@ -407,9 +557,10 @@ class SelfHostedSentryServer {
           const issueResponse = await this.axiosInstance.get(
             `issues/${issueId}/`
           );
-          
+
           // Extract only essential fields to reduce response size
           let issueData = extractEssentialIssueFields(issueResponse.data);
+          let combinedData: any = { ...issueData, latest_event: null };
 
           // Only include latest event if explicitly requested
           if (args.include_latest_event) {
@@ -420,16 +571,18 @@ class SelfHostedSentryServer {
               const eventResponse = await this.axiosInstance.get(
                 `organizations/${ORG_SLUG}/issues/${issueId}/events/latest/`
               );
-              
+
               // Extract only essential event data
               if (eventResponse.data.entries) {
-                issueData.latest_event = {
+                combinedData.latest_event = {
                   id: eventResponse.data.id,
                   eventID: eventResponse.data.eventID,
                   dateCreated: eventResponse.data.dateCreated,
                   entries: eventResponse.data.entries.slice(0, 3).map(extractEssentialEventEntry),
                   _note: "Event truncated. Use get_sentry_event_details for full event data."
                 };
+              } else {
+                combinedData.latest_event = eventResponse.data;
               }
             } catch (eventError) {
               console.warn(
@@ -439,9 +592,25 @@ class SelfHostedSentryServer {
             }
           }
 
+          // Apply filtering if specified
+          if (args.max_stack_frames) {
+            console.error(`Truncating stack traces to ${args.max_stack_frames} frames`);
+            combinedData = truncateStackTraces(combinedData, args.max_stack_frames);
+          }
+
+          if (args.include_fields || args.exclude_fields) {
+            console.error(`Applying field filters - include: ${args.include_fields?.join(', ') || 'none'}, exclude: ${args.exclude_fields?.join(', ') || 'none'}`);
+            combinedData = filterObjectFields(combinedData, args.include_fields, args.exclude_fields);
+          }
+
+          if (args.grep_pattern) {
+            console.error(`Applying grep pattern filter: ${args.grep_pattern}`);
+            combinedData = grepFilter(combinedData, args.grep_pattern);
+          }
+
           return {
             content: [
-              { type: "text", text: JSON.stringify(issueData, null, 2) },
+              { type: "text", text: JSON.stringify(combinedData, null, 2) },
             ],
           };
         }
@@ -700,7 +869,7 @@ class SelfHostedSentryServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error(`Self-hosted Sentry MCP server v0.2.0 running for org "${ORG_SLUG}" at ${SENTRY_BASE_URL}`);
+    console.error(`Self-hosted Sentry MCP server v0.2.1 running for org "${ORG_SLUG}" at ${SENTRY_BASE_URL}`);
   }
 }
 
