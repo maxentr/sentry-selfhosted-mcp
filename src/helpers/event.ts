@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export function extractEssentialEventEntry(entry: any): any {
-  if (entry.type === 'exception' && entry.data?.values) {
+  if (entry.type === "exception" && entry.data?.values) {
     return {
       type: entry.type,
       data: {
@@ -18,25 +18,25 @@ export function extractEssentialEventEntry(entry: any): any {
                   colNo: frame.colNo,
                   absPath: frame.absPath,
                   context: frame.context?.slice(-3, 4),
-                  vars: Object.keys(frame.vars || {}).length > 0 ? '...' : undefined,
+                  vars: Object.keys(frame.vars || {}).length > 0 ? "..." : undefined,
                 })),
               }
             : undefined,
         })),
       },
-    };
+    }
   }
 
-  if (entry.type === 'message') {
-    return entry;
+  if (entry.type === "message") {
+    return entry
   }
 
-  if (entry.type === 'breadcrumbs' && entry.data?.values) {
+  if (entry.type === "breadcrumbs" && entry.data?.values) {
     return {
       type: entry.type,
       data: { values: entry.data.values.slice(-10) },
-    };
+    }
   }
 
-  return { type: entry.type, _truncated: true };
+  return { type: entry.type, _truncated: true }
 }

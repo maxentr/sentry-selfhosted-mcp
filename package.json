@@ -29,13 +29,17 @@
     "build": "tsc",
     "prepare": "pnpm run build",
     "watch": "tsc --watch",
-    "inspector": "npx @modelcontextprotocol/inspector build/index.js"
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "check": "biome check",
+    "lint": "biome lint",
+    "format": "biome format"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0",
     "zod": "^3.25"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.2",
     "@types/node": "^22",
     "typescript": "^5.9.3"
   },
