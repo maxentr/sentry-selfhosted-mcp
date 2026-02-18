@@ -295,7 +295,7 @@ const filterObjectFields = (obj: any, includeFields?: string[], excludeFields?: 
 
 // Apply grep pattern filtering to JSON content
 const grepFilter = (data: any, pattern: string): any => {
-  const regex = new RegExp(pattern, 'gi');
+  const regex = new RegExp(pattern, 'i');
   const jsonStr = JSON.stringify(data, null, 2);
   const lines = jsonStr.split('\n');
   const matchingLines: string[] = [];
@@ -557,8 +557,8 @@ class SelfHostedSentryServer {
               },
               method: {
                 type: "string",
-                enum: ["GET", "POST", "PUT", "DELETE"],
-                description: "HTTP method (default: GET)",
+                enum: ["GET"],
+                description: "HTTP method (only GET allowed for safety)",
                 default: "GET",
               },
               params: {
@@ -789,15 +789,17 @@ class SelfHostedSentryServer {
             const totalEntries = eventData.entries.length;
             let selectedEntries = [];
             
+            const allEntries = [...eventData.entries];
+
             if (args.entry_type) {
               // Filter to specific entry type
               selectedEntries = eventData.entries
                 .filter((e: any) => e.type === args.entry_type)
                 .slice(offset, offset + limit);
-                
+
               if (selectedEntries.length === 0) {
                 eventData.entries = [];
-                eventData.error = `No entries of type '${args.entry_type}' found. Available types: ${[...new Set(eventData.entries.map((e: any) => e.type))].join(', ')}`;
+                eventData.error = `No entries of type '${args.entry_type}' found. Available types: ${[...new Set(allEntries.map((e: any) => e.type))].join(', ')}`;
               }
             } else {
               // Smart selection: prioritize important entry types
@@ -906,8 +908,7 @@ class SelfHostedSentryServer {
               "Invalid args for raw_sentry_api."
             );
 
-          const method = (args.method || 'GET').toUpperCase();
-          console.error(`Raw API ${method} request to ${args.endpoint}`);
+          console.error(`Raw API GET request to ${args.endpoint}`);
 
           let response;
           const config: any = {};
@@ -916,25 +917,7 @@ class SelfHostedSentryServer {
             config.params = args.params;
           }
 
-          switch (method) {
-            case 'GET':
-              response = await this.axiosInstance.get(args.endpoint, config);
-              break;
-            case 'POST':
-              response = await this.axiosInstance.post(args.endpoint, args.body || {}, config);
-              break;
-            case 'PUT':
-              response = await this.axiosInstance.put(args.endpoint, args.body || {}, config);
-              break;
-            case 'DELETE':
-              response = await this.axiosInstance.delete(args.endpoint, config);
-              break;
-            default:
-              throw new McpError(
-                ErrorCode.InvalidParams,
-                `Unsupported HTTP method: ${method}`
-              );
-          }
+          response = await this.axiosInstance.get(args.endpoint, config);
 
           let responseData = response.data;
 
@@ -1169,7 +1152,7 @@ class SelfHostedSentryServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error(`Self-hosted Sentry MCP server v0.2.1 running for org "${ORG_SLUG}" at ${SENTRY_BASE_URL}`);
+    console.error(`Self-hosted Sentry MCP server v0.4.0 running for org "${ORG_SLUG}" at ${SENTRY_BASE_URL}`);
   }
 }
 
