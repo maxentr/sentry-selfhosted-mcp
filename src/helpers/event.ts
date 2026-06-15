@@ -17,7 +17,14 @@ export function extractEssentialEventEntry(entry: any): any {
                   lineNo: frame.lineNo,
                   colNo: frame.colNo,
                   absPath: frame.absPath,
-                  context: frame.context?.slice(-3, 4),
+                  // Sentry context is [[lineNo, text], ...] centered on the
+                  // error line; keep the error line ± 1 (3 lines max).
+                  context: Array.isArray(frame.context)
+                    ? frame.context.slice(
+                        Math.max(0, Math.floor(frame.context.length / 2) - 1),
+                        Math.floor(frame.context.length / 2) + 2,
+                      )
+                    : undefined,
                   vars: Object.keys(frame.vars || {}).length > 0 ? "..." : undefined,
                 })),
               }

@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
-import { extractEssentialEventEntry, truncateResponse } from "../helpers/index.js"
+import { extractEssentialEventEntry, jsonResult, truncateResponse } from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
     "get_sentry_event_details",
-    "Retrieve details for a specific event ID within a project. IMPORTANT: For large events, always use limit parameter (e.g., limit: 10) to avoid token limits. Use offset for pagination.",
+    "Get details for an event by ID within a project. For large events, use limit (default 10) and offset to paginate and avoid token limits.",
     {
       project_slug: z.string().describe("The slug of the project."),
       event_id: z.string().describe("The ID of the event."),
@@ -15,14 +15,14 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         .min(1)
         .default(10)
         .describe(
-          "RECOMMENDED: Limit the number of entries returned (e.g., 10 for large stack traces). Use this to avoid exceeding token limits.",
+          "Max entries returned (default 10). Lower for large stack traces to avoid token limits.",
         ),
       offset: z
         .number()
         .min(0)
         .default(0)
         .describe(
-          "Offset for pagination through event entries. Start with 0, then use 10, 20, etc.",
+          "Pagination offset over entries (0, 10, 20, …).",
         ),
       entry_type: z
         .enum([
@@ -36,7 +36,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         ])
         .optional()
         .describe(
-          "Filter to only get specific entry type (e.g., 'exception', 'message', 'breadcrumbs'). By default returns most important entries.",
+          "Filter to one entry type. Default: prioritized entries.",
         ),
     },
     async (args) => {
@@ -106,7 +106,11 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         }
       }
 
-      const fieldsToRemove = ["sdk", "packages", "contexts", "user", "request", "environment"]
+      // _meta is Sentry's data-scrubbing annotation tree (which chars were
+      // redacted, by which rule, at which offset). It mirrors `entries` and is
+      // pure noise for debugging — the actual values are already in entries.
+      // On real events it dominates the payload (~80%+), so drop it.
+      const fieldsToRemove = ["_meta", "sdk", "packages", "contexts", "user", "request", "environment"]
       for (const field of fieldsToRemove) {
         if (eventData[field]) {
           eventData[`_${field}_removed`] = true
@@ -116,12 +120,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
 
       const { data: responseData, truncated, pagination_info } = truncateResponse(eventData)
 
-      let resultText = JSON.stringify(responseData, null, 2)
-      if (truncated && pagination_info) {
-        resultText = `${pagination_info}\n\n${resultText}`
-      }
-
-      return { content: [{ type: "text" as const, text: resultText }] }
+      return jsonResult(responseData, truncated && pagination_info ? pagination_info : undefined)
     },
   )
 }

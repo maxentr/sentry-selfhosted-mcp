@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
+import { jsonResult } from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
   server.tool(
@@ -15,7 +16,7 @@ export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
     async (args) => {
       console.error(`Updating issue ${args.issue_id} status to ${args.status}`)
       const data = await api.put(`issues/${args.issue_id}/`, { status: args.status })
-      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
+      return jsonResult(data)
     },
   )
 }

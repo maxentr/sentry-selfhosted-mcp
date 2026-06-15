@@ -7,13 +7,15 @@ import {
   filterObjectFields,
   getIssueId,
   grepFilter,
+  jsonResult,
+  textResult,
   truncateStackTraces,
 } from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
     "get_sentry_issue",
-    "Retrieve details for a specific Sentry issue by ID or URL, including the stacktrace from the latest event. Supports filtering and automatic truncation to reduce response size.",
+    "Get a Sentry issue by ID or URL, with the latest event's stacktrace. Supports field filtering and truncation.",
     {
       issue_id_or_url: z
         .string()
@@ -26,13 +28,13 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         .array(z.string())
         .optional()
         .describe(
-          "Optional: List of fields to include (whitelist). Use dot notation for nested fields (e.g., 'latest_event.entries'). If specified, only these fields will be returned.",
+          "Whitelist of fields to return (dot notation for nested, e.g. 'latest_event.entries'). If set, only these are returned.",
         ),
       exclude_fields: z
         .array(z.string())
         .optional()
         .describe(
-          "Optional: List of fields to exclude (blacklist). Use dot notation for nested fields. Applied only if include_fields is not specified.",
+          "Blacklist of fields to drop (dot notation). Ignored if include_fields is set.",
         ),
       grep_pattern: z
         .string()
@@ -44,21 +46,13 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         .number()
         .optional()
         .describe(
-          "Optional: Maximum number of stack trace frames to return (default: all). Keeps the most relevant (bottom) frames.",
+          "Max stack frames to return (default: all). Keeps bottom (most relevant) frames.",
         ),
     },
     async (args) => {
       const issueId = getIssueId(args.issue_id_or_url)
       if (!issueId) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Could not extract issue ID from: ${args.issue_id_or_url}`,
-            },
-          ],
-          isError: true,
-        }
+        return textResult(`Could not extract issue ID from: ${args.issue_id_or_url}`, true)
       }
 
       console.error(`Fetching Sentry issue ${issueId}`)
@@ -104,7 +98,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         combinedData = grepFilter(combinedData, args.grep_pattern)
       }
 
-      return { content: [{ type: "text" as const, text: JSON.stringify(combinedData, null, 2) }] }
+      return jsonResult(combinedData)
     },
   )
 }

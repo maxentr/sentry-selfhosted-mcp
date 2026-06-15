@@ -1,18 +1,19 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
+import { jsonResult, textResult } from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
     "check_dsym_status",
-    "Check if debug symbols (dSYM files) are missing for iOS/macOS crashes. Missing dSYMs cause stack traces to show addresses instead of function names. Returns list of missing symbols with UUIDs for upload.",
+    "Check for missing iOS/macOS debug symbols (dSYM). Missing dSYMs make stack traces show addresses, not function names. Returns missing symbols with UUIDs for upload.",
     {
       project_slug: z.string().describe("The slug of the project (e.g., 'apple-ios')"),
       event_id: z
         .string()
         .optional()
         .describe(
-          "Optional: Specific event ID to check. If not provided, checks recent events in project.",
+          "Event ID to check. Default: most recent event in project.",
         ),
     },
     async (args) => {
@@ -32,14 +33,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         })
 
         if (!issues || issues.length === 0) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: "No recent issues found in project. Cannot check dSYM status.",
-              },
-            ],
-          }
+          return textResult("No recent issues found in project. Cannot check dSYM status.")
         }
 
         const issueId = issues[0].id
@@ -65,27 +59,16 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
 
       const hasMissingSymbols = missingDsyms.length > 0
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                project: args.project_slug,
-                event_id: eventData.eventID || args.event_id,
-                has_missing_symbols: hasMissingSymbols,
-                missing_count: missingDsyms.length,
-                missing_symbols: missingDsyms,
-                recommendation: hasMissingSymbols
-                  ? "Upload missing dSYM files to Sentry to see full function names in stack traces. Use 'sentry-cli upload-dif' command."
-                  : "All debug symbols are present for this event.",
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      }
+      return jsonResult({
+        project: args.project_slug,
+        event_id: eventData.eventID || args.event_id,
+        has_missing_symbols: hasMissingSymbols,
+        missing_count: missingDsyms.length,
+        missing_symbols: missingDsyms,
+        recommendation: hasMissingSymbols
+          ? "Upload missing dSYM files to Sentry to see full function names in stack traces. Use 'sentry-cli upload-dif' command."
+          : "All debug symbols are present for this event.",
+      })
     },
   )
 }

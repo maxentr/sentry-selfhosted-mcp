@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
-import { truncateResponse } from "../helpers/index.js"
+import { jsonResult, truncateResponse } from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
@@ -44,12 +44,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
 
       const { data: responseData, truncated, pagination_info } = truncateResponse(data)
 
-      let resultText = JSON.stringify(responseData, null, 2)
-      if (truncated && pagination_info) {
-        resultText = `${pagination_info}\n\n${resultText}`
-      }
-
-      return { content: [{ type: "text" as const, text: resultText }] }
+      return jsonResult(responseData, truncated && pagination_info ? pagination_info : undefined)
     },
   )
 }

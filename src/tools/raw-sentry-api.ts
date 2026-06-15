@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
-import { grepFilter } from "../helpers/index.js"
+import { estimateTokens, grepFilter, jsonResult, textResult } from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
   server.tool(
     "raw_sentry_api",
-    'Make a raw API call to any Sentry endpoint. Returns unfiltered JSON that agents can process with grep_pattern or other filters. Useful for debugging or accessing data not covered by other tools. WARNING: Event endpoints can return 100K+ tokens. ALWAYS use grep_pattern for events to avoid token limits. Common patterns: \'"function":|"in_app":\' for stack frames, \'"type":\' for breadcrumbs.',
+    "Raw GET to any Sentry endpoint, returns unfiltered JSON. Use for data not covered by other tools. WARNING: event endpoints can return 100K+ tokens — ALWAYS pass grep_pattern for events.",
     {
       endpoint: z
         .string()
@@ -20,7 +20,7 @@ export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
         .string()
         .optional()
         .describe(
-          'CRITICAL for event endpoints: Regex to filter response. Reduces 100K+ token responses to manageable size. Examples: \'"function":|"filename":|"in_app":true\' for stack traces, \'"breadcrumbs"\' for user actions, \'"tags"\' for metadata. Pattern matches return line + surrounding context.',
+          'CRITICAL for events: regex filter to cut 100K+ responses. Examples: \'"function":|"filename":|"in_app":true\' (stack traces), \'"breadcrumbs"\' (actions), \'"tags"\' (metadata). Returns matching lines + context.',
         ),
     },
     async (args) => {
@@ -32,21 +32,15 @@ export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
 
       const responseData = await api.get(args.endpoint, params)
 
-      const jsonString = JSON.stringify(responseData, null, 2)
-      const estimatedTokens = Math.ceil(jsonString.length / 4)
+      const estimatedTokens = estimateTokens(responseData)
 
       if (estimatedTokens > 20000 && !args.grep_pattern) {
         console.error(
           `WARNING: Response is ~${estimatedTokens} tokens. Consider using grep_pattern.`,
         )
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `WARNING: Response is approximately ${estimatedTokens} tokens (limit: 25,000).\n\nThis endpoint returns a large amount of data. Please use grep_pattern to filter the response.\n\nSuggested patterns:\n- Stack traces: '"function":|"filename":|"in_app":true'\n- Breadcrumbs: '"breadcrumbs"'\n- Tags/metadata: '"tags"'\n- Error details: '"type":|"value":'\n\nExample: Add grep_pattern: '"function":|"in_app":' to your request.`,
-            },
-          ],
-        }
+        return textResult(
+          `WARNING: Response is approximately ${estimatedTokens} tokens (limit: 25,000).\n\nThis endpoint returns a large amount of data. Please use grep_pattern to filter the response.\n\nSuggested patterns:\n- Stack traces: '"function":|"filename":|"in_app":true'\n- Breadcrumbs: '"breadcrumbs"'\n- Tags/metadata: '"tags"'\n- Error details: '"type":|"value":'\n\nExample: Add grep_pattern: '"function":|"in_app":' to your request.`,
+        )
       }
 
       let result = responseData
@@ -55,7 +49,7 @@ export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
         result = grepFilter(responseData, args.grep_pattern)
       }
 
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] }
+      return jsonResult(result, undefined, { strip: false })
     },
   )
 }
