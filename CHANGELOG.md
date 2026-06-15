@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `extractEssentialEventEntry` returned an empty stack-frame `context` due to an incorrect `slice(-3, 4)`; it now keeps the error line ± 1 (3 lines).
 
+### Dependencies
+
+- `@modelcontextprotocol/sdk` `^1.27` → `^1.29`.
+- `zod` `^3.25` → `^4.4` (major). `z.record(...)` now requires an explicit key schema; updated `raw_sentry_api` accordingly. No change to tool behavior.
+
+### Tooling
+
+- Migrated from Biome to [oxlint](https://oxc.rs) + [oxfmt](https://oxc.rs/docs/guide/usage/formatter) for linting and formatting.
+- Added [lefthook](https://lefthook.dev) git hooks (pre-commit lint/format, pre-push typecheck).
+- Bumped pnpm to `11.6.0`, `typescript` to `^6`, `@types/node` to `^25`. pnpm settings moved to `pnpm-workspace.yaml`.
+
+_Dev-tooling and dependency changes only — no change to the published runtime behavior of the MCP tools._
+
 ## [1.0.1] - 2026-02-26
 
 ### Changed
