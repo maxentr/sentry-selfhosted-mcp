@@ -12,9 +12,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
       event_id: z
         .string()
         .optional()
-        .describe(
-          "Event ID to check. Default: most recent event in project.",
-        ),
+        .describe("Event ID to check. Default: most recent event in project."),
     },
     async (args) => {
       console.error(`Checking dSYM status for project ${args.project_slug}`)

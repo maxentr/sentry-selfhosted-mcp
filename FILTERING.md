@@ -9,7 +9,9 @@ Version 0.2.1 adds powerful filtering capabilities to the `get_sentry_issue` too
 ### 1. Field Filtering
 
 #### Include Fields (Whitelist)
+
 Only return specified fields:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -18,7 +20,9 @@ Only return specified fields:
 ```
 
 #### Exclude Fields (Blacklist)
+
 Remove specific fields from response:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -31,6 +35,7 @@ Remove specific fields from response:
 ### 2. Stack Trace Truncation
 
 Limit the number of stack frames returned:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -43,6 +48,7 @@ This keeps only the most relevant (bottom) frames of the stack trace.
 ### 3. Grep Pattern Filtering
 
 Filter response using regex patterns:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -53,6 +59,7 @@ Filter response using regex patterns:
 ### 4. Combined Filtering
 
 All filters can be combined for maximum reduction:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -65,7 +72,9 @@ All filters can be combined for maximum reduction:
 ## Usage Examples
 
 ### Minimal Error Information
+
 Get just the error message and top stack frames:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -75,7 +84,9 @@ Get just the error message and top stack frames:
 ```
 
 ### Debug Specific Function
+
 Search for specific function calls in the stack:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -85,7 +96,9 @@ Search for specific function calls in the stack:
 ```
 
 ### Remove Heavy Metadata
+
 Exclude stats and context to reduce size:
+
 ```javascript
 {
   "issue_id_or_url": "5217",
@@ -103,6 +116,7 @@ Exclude stats and context to reduce size:
 ## Token Reduction Strategy
 
 For issues exceeding token limits, try this progression:
+
 1. Start with `max_stack_frames: 5`
 2. Add `exclude_fields` for metadata
 3. Use `include_fields` for only essential data
