@@ -9,7 +9,7 @@ export async function startServer() {
 
   const server = new McpServer({
     name: "sentry-selfhosted-mcp",
-    version: "1.0.0",
+    version: "1.1.0",
   })
 
   const api = new ApiClient(config.baseUrl, config.authToken)
@@ -20,6 +20,6 @@ export async function startServer() {
   await server.connect(transport)
 
   console.error(
-    `Self-hosted Sentry MCP server v1.0.0 running for org "${config.orgSlug}" at ${config.baseUrl}`,
+    `Self-hosted Sentry MCP server v1.1.0 running for org "${config.orgSlug}" at ${config.baseUrl}`,
   )
 }

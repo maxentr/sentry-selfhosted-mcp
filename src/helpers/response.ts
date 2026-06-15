@@ -4,7 +4,7 @@ export function truncateResponse(
   data: any,
   maxTokens = 15000,
 ): { data: any; truncated: boolean; pagination_info?: string } {
-  const jsonString = JSON.stringify(data, null, 2)
+  const jsonString = JSON.stringify(data)
   const estimatedTokens = Math.ceil(jsonString.length / 4)
 
   if (estimatedTokens <= maxTokens) {

@@ -1,6 +1,6 @@
 {
   "name": "@maxentr/sentry-selfhosted-mcp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Model Context Protocol server for self-hosted Sentry instances with debugging tools, filtering, raw API access, and stack frame extraction.",
   "license": "MIT",
   "author": "maxentr",

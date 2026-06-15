@@ -1,11 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
+import { jsonResult } from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
     "get_stack_frames",
-    "Extract structured stack trace frames from an event. Optimized for debugging - returns only relevant frame info (function, file, line, in_app status) without noise. Much more efficient than raw_sentry_api for stack trace analysis.",
+    "Extract structured stack frames from an event (function, file, line, in_app). More efficient than raw_sentry_api for stack analysis.",
     {
       project_slug: z.string().describe("The slug of the project (e.g., 'apple-ios')"),
       event_id: z.string().describe("The event ID to extract stack frames from"),
@@ -13,13 +14,13 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         .boolean()
         .default(false)
         .describe(
-          "Filter to only show frames from your application code (excludes system/library frames). Default: false",
+          "Only app-code frames (exclude system/library). Default: false.",
         ),
       max_frames: z
         .number()
         .default(50)
         .describe(
-          "Maximum number of frames to return. Default: 50. Start from most recent (bottom of stack).",
+          "Max frames (default 50), kept from bottom of stack (most recent).",
         ),
     },
     async (args) => {
@@ -65,24 +66,13 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
 
       const limitedFrames = frames.slice(-args.max_frames)
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                event_id: args.event_id,
-                total_frames: frames.length,
-                returned_frames: limitedFrames.length,
-                in_app_only: args.in_app_only,
-                frames: limitedFrames,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      }
+      return jsonResult({
+        event_id: args.event_id,
+        total_frames: frames.length,
+        returned_frames: limitedFrames.length,
+        in_app_only: args.in_app_only,
+        frames: limitedFrames,
+      })
     },
   )
 }
