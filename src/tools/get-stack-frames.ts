@@ -13,15 +13,11 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
       in_app_only: z
         .boolean()
         .default(false)
-        .describe(
-          "Only app-code frames (exclude system/library). Default: false.",
-        ),
+        .describe("Only app-code frames (exclude system/library). Default: false."),
       max_frames: z
         .number()
         .default(50)
-        .describe(
-          "Max frames (default 50), kept from bottom of stack (most recent).",
-        ),
+        .describe("Max frames (default 50), kept from bottom of stack (most recent)."),
     },
     async (args) => {
       console.error(

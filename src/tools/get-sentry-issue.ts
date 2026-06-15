@@ -33,9 +33,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
       exclude_fields: z
         .array(z.string())
         .optional()
-        .describe(
-          "Blacklist of fields to drop (dot notation). Ignored if include_fields is set.",
-        ),
+        .describe("Blacklist of fields to drop (dot notation). Ignored if include_fields is set."),
       grep_pattern: z
         .string()
         .optional()

@@ -14,8 +14,14 @@ export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
           "API endpoint path (e.g., 'projects/beoflow/apple-ios/events/abc123/'). Do NOT include /api/0/ prefix.",
         ),
       method: z.enum(["GET"]).default("GET").describe("HTTP method (only GET allowed for safety)"),
-      params: z.record(z.unknown()).optional().describe("URL query parameters as key-value pairs"),
-      body: z.record(z.unknown()).optional().describe("Request body for POST/PUT requests"),
+      params: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("URL query parameters as key-value pairs"),
+      body: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Request body for POST/PUT requests"),
       grep_pattern: z
         .string()
         .optional()

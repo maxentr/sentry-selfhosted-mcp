@@ -21,9 +21,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         .number()
         .min(0)
         .default(0)
-        .describe(
-          "Pagination offset over entries (0, 10, 20, …).",
-        ),
+        .describe("Pagination offset over entries (0, 10, 20, …)."),
       entry_type: z
         .enum([
           "exception",
@@ -35,9 +33,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
           "contexts",
         ])
         .optional()
-        .describe(
-          "Filter to one entry type. Default: prioritized entries.",
-        ),
+        .describe("Filter to one entry type. Default: prioritized entries."),
     },
     async (args) => {
       console.error(`Fetching event ${args.event_id} for project ${args.project_slug}`)
@@ -110,7 +106,15 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
       // redacted, by which rule, at which offset). It mirrors `entries` and is
       // pure noise for debugging — the actual values are already in entries.
       // On real events it dominates the payload (~80%+), so drop it.
-      const fieldsToRemove = ["_meta", "sdk", "packages", "contexts", "user", "request", "environment"]
+      const fieldsToRemove = [
+        "_meta",
+        "sdk",
+        "packages",
+        "contexts",
+        "user",
+        "request",
+        "environment",
+      ]
       for (const field of fieldsToRemove) {
         if (eventData[field]) {
           eventData[`_${field}_removed`] = true
