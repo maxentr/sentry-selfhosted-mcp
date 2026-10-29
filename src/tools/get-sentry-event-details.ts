@@ -1,15 +1,20 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
-import { extractEssentialEventEntry, jsonResult, truncateResponse } from "../helpers/index.js"
+import {
+  eventPath,
+  extractEssentialEventEntry,
+  jsonResult,
+  truncateResponse,
+} from "../helpers/index.js"
 
 export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
     "get_sentry_event_details",
     "Get details for an event by ID within a project. For large events, use limit (default 10) and offset to paginate and avoid token limits.",
     {
-      project_slug: z.string().describe("The slug of the project."),
-      event_id: z.string().describe("The ID of the event."),
+      event_id: z.string().describe("Event ID, or event URL (then project_slug is optional)."),
+      project_slug: z.string().optional().describe("Project slug; needed with a bare event ID."),
       limit: z
         .number()
         .min(1)
@@ -38,9 +43,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
     async (args) => {
       console.error(`Fetching event ${args.event_id} for project ${args.project_slug}`)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const eventData: any = await api.get(
-        `projects/${orgSlug}/${args.project_slug}/events/${args.event_id}/`,
-      )
+      const eventData: any = await api.get(eventPath(orgSlug, args.event_id, args.project_slug))
 
       const offset = args.offset
       const limit = args.limit

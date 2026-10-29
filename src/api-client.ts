@@ -9,6 +9,24 @@ export class ApiError extends Error {
   }
 }
 
+/** Says what failed and what to fix, with Sentry's own `detail` when it sends one. */
+export function errorMessage(method: string, path: string, status: number, body: unknown): string {
+  const detail =
+    body && typeof body === "object" && "detail" in body ? String(body.detail) : undefined
+  const where = `${method} ${path}`
+  const hint =
+    status === 401
+      ? "Auth token invalid or expired: check SENTRY_AUTH_TOKEN."
+      : status === 403
+        ? "Token lacks a scope for this call (issue:write and comment:write for updates and comments)."
+        : status === 404
+          ? "Not found: check the ID, short ID, project slug or org slug."
+          : status === 429
+            ? "Rate limited by Sentry: wait and retry."
+            : `Sentry API error ${status}.`
+  return [`${hint} (${where})`, detail].filter(Boolean).join(" — ")
+}
+
 export class ApiClient {
   private baseUrl: string
   private headers: Record<string, string>
@@ -64,15 +82,11 @@ export class ApiClient {
 
       if (!response.ok) {
         const responseBody = await response.json().catch(() => response.statusText)
-        let message = `Sentry API error: ${response.status}`
-
-        if (response.status === 401 || response.status === 403) {
-          message = "Sentry API permission denied. Check auth token validity and permissions."
-        } else if (response.status === 404) {
-          message = "Sentry resource not found. Check IDs/slugs."
-        }
-
-        throw new ApiError(message, response.status, responseBody)
+        throw new ApiError(
+          errorMessage(method, path, response.status, responseBody),
+          response.status,
+          responseBody,
+        )
       }
 
       return (await response.json()) as T

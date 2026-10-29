@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-10-29
+
+### Added
+
+- Every issue argument accepts an issue ID, a short ID (`API-DATA-1A`) or any Sentry URL; every
+  event argument accepts an event URL, which makes `project_slug` optional.
+- `get_issue_tag_values`: top values of one tag, or every tag with its top 3 values.
+- `get_issue_activity`: issue history (comments, status changes, regressions with release).
+- `list_sentry_issues` searches the whole organization when `project_slug` is omitted, with `sort`
+  and `period`.
+- `SENTRY_MCP_TOOLS=core` leaves out `check_dsym_status`.
+
+### Changed
+
+- **Breaking:** `update_sentry_issue_status` becomes `update_sentry_issue`: resolved in next
+  release, timed or counted ignore, assignee. A call that changes nothing is not sent.
+- `list_sentry_projects` returns slug, name, platform and id: ~56 KB → ~2.7 KB on a 35-project org.
+- `list_sentry_issues` returns one summary per issue and 10 issues by default (was 25 full objects).
+- `get_stack_frames` defaults to in-app frames and 15 frames.
+- Write tools return a short acknowledgement instead of the full object; comments max 4096 chars.
+- API errors name the call and what to fix (expired token, missing scope, wrong ID, rate limit).
+- `raw_sentry_api` drops its unused `method` and `body` arguments.
+
+### Fixed
+
+- `get_stack_frames` read `in_app` while the REST API sends `inApp`: `in_app_only` dropped every frame.
+
 ## [1.2.0] - 2026-10-29
 
 ### Added

@@ -1,5 +1,6 @@
 export { extractEssentialEventEntry } from "./event.js"
 export { filterObjectFields, grepFilter } from "./filter.js"
-export { extractEssentialIssueFields, getIssueId } from "./issue.js"
+export { extractEssentialIssueFields } from "./issue.js"
+export { eventPath, parseSentryRef, resolveIssueId } from "./ref.js"
 export { truncateResponse, truncateStackTraces } from "./response.js"
 export { estimateTokens, jsonResult, textResult } from "./result.js"

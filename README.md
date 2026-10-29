@@ -81,14 +81,22 @@ no authentication of its own: keep it on loopback.
 
 ## Available Tools
 
-| Tool                          | Description                                                                    |
-| ----------------------------- | ------------------------------------------------------------------------------ |
-| `get_sentry_issue`            | Retrieve issue details by ID or URL, with filtering and stack trace truncation |
-| `list_sentry_projects`        | List all projects in the organization                                          |
-| `list_sentry_issues`          | List issues for a project with query/status filters and pagination             |
-| `get_sentry_event_details`    | Retrieve event details with smart entry prioritization and pagination          |
-| `update_sentry_issue_status`  | Update issue status (resolved/ignored/unresolved)                              |
-| `create_sentry_issue_comment` | Add a comment to an issue                                                      |
-| `raw_sentry_api`              | Raw GET requests to any Sentry API endpoint with grep filtering                |
-| `get_stack_frames`            | Extract structured stack trace frames from an event                            |
-| `check_dsym_status`           | Check for missing dSYM/debug symbols in iOS/macOS crashes                      |
+Every `issue_id` argument takes an issue ID, a short ID (`API-DATA-1A`) or any Sentry issue URL.
+Every `event_id` argument takes an event ID or an event URL (then `project_slug` is optional).
+
+| Tool                          | Description                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------ |
+| `get_sentry_issue`            | Issue details, optional latest event, with field filtering and stack truncation      |
+| `list_sentry_issues`          | Search issues in a project or the whole org: query, status, sort, period, pagination |
+| `get_sentry_event_details`    | Event details with entry prioritization and pagination                               |
+| `get_stack_frames`            | Structured stack frames, in-app only by default (falls back to all)                  |
+| `get_issue_tag_values`        | Top values of a tag (release, environment, browser…) or of every tag                 |
+| `get_issue_activity`          | Issue history: comments, status changes, regressions with release, assignments       |
+| `update_sentry_issue`         | Status (incl. resolved in next release, timed ignore) and assignee; skips no-ops     |
+| `create_sentry_issue_comment` | Add a comment (max 4096 chars)                                                       |
+| `list_sentry_projects`        | Projects of the org: slug, name, platform                                            |
+| `raw_sentry_api`              | Raw GET to any Sentry API endpoint, with grep filtering and a size guard             |
+| `check_dsym_status`           | Missing dSYM/debug symbols in iOS/macOS crashes                                      |
+
+`SENTRY_MCP_TOOLS=core` leaves out `check_dsym_status`, for organizations without Apple
+projects: every tool schema costs tokens in each session.

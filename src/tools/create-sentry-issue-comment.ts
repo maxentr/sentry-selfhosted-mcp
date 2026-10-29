@@ -1,20 +1,25 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
-import { jsonResult } from "../helpers/index.js"
+import { jsonResult, resolveIssueId, textResult } from "../helpers/index.js"
 
-export function register(server: McpServer, api: ApiClient, _orgSlug: string) {
+export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
     "create_sentry_issue_comment",
-    "Add a comment to a Sentry issue.",
+    "Add a comment (Markdown, max 4096 chars) to a Sentry issue.",
     {
-      issue_id: z.string().describe("The ID of the issue to comment on."),
-      comment_text: z.string().describe("The text content of the comment."),
+      issue_id: z.string().describe("Issue ID, short ID or issue URL."),
+      comment_text: z.string().min(1).max(4096).describe("Comment text."),
     },
     async (args) => {
-      console.error(`Adding comment to issue ${args.issue_id}`)
-      const data = await api.post(`issues/${args.issue_id}/comments/`, { text: args.comment_text })
-      return jsonResult(data)
+      const issueId = await resolveIssueId(api, orgSlug, args.issue_id)
+      if (!issueId) return textResult(`Not an issue reference: ${args.issue_id}`, true)
+      console.error(`Adding comment to issue ${issueId}`)
+      const data = await api.post<{ id?: string; dateCreated?: string }>(
+        `issues/${issueId}/comments/`,
+        { text: args.comment_text },
+      )
+      return jsonResult({ ok: true, issue_id: issueId, comment_id: data.id, at: data.dateCreated })
     },
   )
 }

@@ -1,50 +1,55 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ApiClient } from "../api-client.js"
-import { jsonResult, truncateResponse } from "../helpers/index.js"
+import { jsonResult } from "../helpers/index.js"
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const summary = (i: any) => ({
+  id: i.id,
+  shortId: i.shortId,
+  title: i.title,
+  culprit: i.culprit,
+  project: i.project?.slug,
+  level: i.level,
+  status: i.status,
+  count: i.count,
+  userCount: i.userCount,
+  firstSeen: i.firstSeen,
+  lastSeen: i.lastSeen,
+})
 
 export function register(server: McpServer, api: ApiClient, orgSlug: string) {
   server.tool(
     "list_sentry_issues",
-    "List issues for a specific project, optionally filtering by query or status. Supports pagination for large result sets.",
+    'Search issues in one project, or the whole organization when project_slug is omitted. Query uses Sentry syntax: "is:unresolved level:error release:1.2.0 environment:production". Returns a summary per issue; use get_sentry_issue for details.',
     {
-      project_slug: z.string().describe('The slug of the project (e.g., "my-web-app").'),
-      query: z
-        .string()
+      project_slug: z.string().optional().describe("Project slug. Omit to search all projects."),
+      query: z.string().optional().describe('Sentry search query, e.g. "is:unresolved".'),
+      status: z.enum(["resolved", "unresolved", "ignored"]).optional().describe("Status filter."),
+      sort: z
+        .enum(["date", "new", "freq", "user"])
         .optional()
-        .describe('Optional Sentry search query (e.g., "is:unresolved environment:production").'),
-      status: z
-        .enum(["resolved", "unresolved", "ignored"])
-        .optional()
-        .describe("Optional issue status filter."),
-      limit: z
-        .number()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe("Maximum number of issues to return (1-100, default: 25)."),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Pagination cursor from previous response for getting next page."),
+        .describe("date = last seen (default), new = first seen, freq = events, user = users."),
+      period: z.string().optional().describe('Stats period, e.g. "24h", "14d" (default 14d).'),
+      limit: z.number().min(1).max(100).default(10).describe("Max issues (default 10)."),
+      cursor: z.string().optional().describe("Pagination cursor from a previous response."),
     },
     async (args) => {
-      const params: Record<string, string | number> = {}
-
-      if (args.query) params.query = args.query
-      if (args.status) {
-        params.query = `${params.query ? `${params.query} ` : ""}is:${args.status}`
-      }
-      if (args.limit) params.limit = args.limit
+      const query = [args.query, args.status ? `is:${args.status}` : undefined]
+        .filter(Boolean)
+        .join(" ")
+      const params: Record<string, string | number> = { limit: args.limit }
+      if (query) params.query = query
+      if (args.sort) params.sort = args.sort
+      if (args.period) params.statsPeriod = args.period
       if (args.cursor) params.cursor = args.cursor
-      if (!params.limit) params.limit = 25
 
-      console.error(`Fetching issues for project ${args.project_slug} in org ${orgSlug}`)
-      const data = await api.get(`projects/${orgSlug}/${args.project_slug}/issues/`, params)
-
-      const { data: responseData, truncated, pagination_info } = truncateResponse(data)
-
-      return jsonResult(responseData, truncated && pagination_info ? pagination_info : undefined)
+      const path = args.project_slug
+        ? `projects/${orgSlug}/${args.project_slug}/issues/`
+        : `organizations/${orgSlug}/issues/`
+      console.error(`Fetching issues: ${path}`)
+      const data = await api.get<unknown[]>(path, params)
+      return jsonResult(data.map(summary))
     },
   )
 }

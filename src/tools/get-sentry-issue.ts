@@ -5,9 +5,9 @@ import {
   extractEssentialEventEntry,
   extractEssentialIssueFields,
   filterObjectFields,
-  getIssueId,
   grepFilter,
   jsonResult,
+  resolveIssueId,
   textResult,
   truncateStackTraces,
 } from "../helpers/index.js"
@@ -19,7 +19,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
     {
       issue_id_or_url: z
         .string()
-        .describe("Sentry issue ID or full issue URL. Issue ID is a number e.g: 123456"),
+        .describe("Issue ID (123456), short ID (API-DATA-1A) or any Sentry issue/event URL."),
       include_latest_event: z
         .boolean()
         .default(false)
@@ -48,7 +48,7 @@ export function register(server: McpServer, api: ApiClient, orgSlug: string) {
         ),
     },
     async (args) => {
-      const issueId = getIssueId(args.issue_id_or_url)
+      const issueId = await resolveIssueId(api, orgSlug, args.issue_id_or_url)
       if (!issueId) {
         return textResult(`Could not extract issue ID from: ${args.issue_id_or_url}`, true)
       }
