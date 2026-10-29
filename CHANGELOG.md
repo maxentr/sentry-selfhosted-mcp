@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-29
+
+### Added
+
+- Streamable HTTP transport (`MCP_TRANSPORT=http`, `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_PATH`).
+  One process serves every client, one MCP session each. Binds `127.0.0.1` by default and rejects
+  non-loopback `Host` headers (DNS rebinding protection). stdio stays the default.
+
 ## [1.1.0] - 2026-06-15
 
 ### Changed

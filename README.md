@@ -59,6 +59,26 @@ Then reference the built file in your MCP config:
 | `SENTRY_AUTH_TOKEN`  | Yes      | API auth token (scopes: `issue:read`, `project:read`, `event:read`, `issue:write`, `comment:write`) |
 | `SENTRY_ORG_SLUG`    | Yes      | Organization slug                                                                                   |
 
+### HTTP transport
+
+By default the server speaks stdio, one process per client. Set `MCP_TRANSPORT=http` to serve
+Streamable HTTP instead: one process then serves every client, each with its own MCP session.
+
+| Environment Variable | Default     | Description                                             |
+| -------------------- | ----------- | ------------------------------------------------------- |
+| `MCP_TRANSPORT`      | `stdio`     | `http` to serve Streamable HTTP                         |
+| `MCP_HTTP_HOST`      | `127.0.0.1` | Bind address. Only loopback `Host` headers are accepted |
+| `MCP_HTTP_PORT`      | `8080`      | Port                                                    |
+| `MCP_HTTP_PATH`      | `/mcp`      | Endpoint path                                           |
+
+```bash
+MCP_TRANSPORT=http MCP_HTTP_PORT=7307 SENTRY_URL=… SENTRY_AUTH_TOKEN=… SENTRY_ORG_SLUG=… \
+  npx -y @maxentr/sentry-selfhosted-mcp
+```
+
+Client configuration: `{ "type": "http", "url": "http://127.0.0.1:7307/mcp" }`. The endpoint has
+no authentication of its own: keep it on loopback.
+
 ## Available Tools
 
 | Tool                          | Description                                                                    |
